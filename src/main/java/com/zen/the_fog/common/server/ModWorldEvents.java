@@ -1,20 +1,18 @@
 package com.zen.the_fog.common.server;
 
+import com.zen.the_fog.common.ManFromTheFog;
 import com.zen.the_fog.common.components.ModComponents;
 import com.zen.the_fog.common.components.TheManHealthComponent;
 import com.zen.the_fog.common.config.Config;
 import com.zen.the_fog.common.entity.ModEntities;
 import com.zen.the_fog.common.entity.the_man.TheManEntity;
 import com.zen.the_fog.common.entity.the_man.TheManUtils;
-import com.zen.the_fog.common.item.ModItems;
 import com.zen.the_fog.common.other.Util;
 import com.zen.the_fog.common.sounds.ModSounds;
 import com.zen.the_fog.common.world.dimension.ModDimensions;
 import corgitaco.enhancedcelestials.EnhancedCelestialsWorldData;
-import corgitaco.enhancedcelestials.api.lunarevent.DefaultLunarEvents;
 import corgitaco.enhancedcelestials.core.EnhancedCelestialsContext;
 import corgitaco.enhancedcelestials.lunarevent.LunarForecast;
-import dev.emi.trinkets.api.TrinketsApi;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
@@ -27,20 +25,39 @@ import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.HoverEvent;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Style;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.GameRules;
-import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.Optional; // Added
 import java.util.Random;
 import java.util.function.Predicate;
 
 public class ModWorldEvents implements ServerEntityEvents.Load, ServerWorldEvents.Load, ServerTickEvents.EndWorldTick, ServerPlayConnectionEvents.Join {
 
     public static final float MAN_CREEPY_VOLUME = 5f;
+    private static final String STATUS_JOINED = "JOINED";
+    // private static final String STATUS_DECLINED = "DECLINED"; // Not strictly needed here but good for consistency
 
-    public static final Predicate<? super ServerPlayerEntity> VALID_PLAYER_PREDICATE = player -> player.isAlive() && !player.isSpectator() && !player.isCreative() && TheManEntity.canAttack(player,player.getWorld());
+    // Updated VALID_PLAYER_PREDICATE to check the terrorPlayerList map
+    public static final Predicate<? super ServerPlayerEntity> VALID_PLAYER_PREDICATE = player -> {
+        Config config = Config.get();
+        if (config.terrorPlayerList == null) {
+            return false; // Should not happen if config is loaded
+        }
+        String playerStatus = config.terrorPlayerList.getOrDefault(player.getUuidAsString(), ""); // Default to empty if not in map
+        return player.isAlive() &&
+               !player.isSpectator() &&
+               !player.isCreative() &&
+               TheManEntity.canAttack(player, player.getWorld()) &&
+               STATUS_JOINED.equals(playerStatus);
+    };
 
     public long ticksBetweenSpawnAttempts = Util.secToTick(15.0);
 
@@ -121,7 +138,49 @@ public class ModWorldEvents implements ServerEntityEvents.Load, ServerWorldEvent
 
     @Override
     public void onPlayReady(ServerPlayNetworkHandler handler, PacketSender sender, MinecraftServer server) {
+        ServerPlayerEntity player = handler.player;
+        String playerUuid = player.getUuidAsString();
+        Config config = Config.get();
 
+        if (config.terrorPlayerList == null) {
+            // This should ideally not happen if YACL initializes config correctly.
+            // If it's null, creating a new one here might not be saved correctly by YACL unless explicitly handled.
+            // For now, log a warning and assume it means undecided.
+            ManFromTheFog.LOGGER.warn("Config.terrorPlayerList is null during onPlayReady for player " + playerUuid + ". Assuming undecided.");
+            // To be safe, skip sending message if map is null, as getOrDefault would fail.
+            // However, the predicate also checks for null, so this state should be handled.
+        }
+
+        // Player is "UNDECIDED" if not in the map.
+        if (config.terrorPlayerList == null || !config.terrorPlayerList.containsKey(playerUuid)) {
+            MutableText welcomeMessage = Text.literal("Bienvenido. Este servidor tiene mecánicas de terror opcionales. Por favor, elige una opción:\n");
+
+            MutableText joinText = Text.literal("[¡Sí, quiero participar!]");
+            joinText.setStyle(Style.EMPTY
+                    .withFormatting(Formatting.GREEN, Formatting.BOLD)
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/terror whitelist join"))
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.literal("Haz clic para PARTICIPAR en las mecánicas de terror."))));
+
+            MutableText declineText = Text.literal("   [No, gracias.]");
+            declineText.setStyle(Style.EMPTY
+                    .withFormatting(Formatting.RED)
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/terror whitelist decline"))
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.literal("Haz clic para NO PARTICIPAR en las mecánicas de terror."))));
+
+            MutableText decideLaterText = Text.literal("   [Decidiré luego]");
+            decideLaterText.setStyle(Style.EMPTY
+                    .withFormatting(Formatting.GRAY)
+                    // No click event, simply closes chat, message will reappear on next login.
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.literal("Cierra el chat. Verás este mensaje de nuevo al unirte."))));
+
+            // Optional: Add a command to reset preference if they accidentally click No.
+            // This is now handled by /terror whitelist undecided
+            // MutableText resetText = Text.literal("\nSi cambias de opinión, usa `/terror whitelist undecided` para ver este mensaje de nuevo.");
+            // resetText.setStyle(Style.EMPTY.withFormatting(Formatting.YELLOW));
+
+            player.sendMessage(welcomeMessage.append(joinText).append(declineText).append(decideLaterText), false);
+        }
+        // If player's UUID is in the map, they have already chosen (JOINED or DECLINED), so no message is shown.
     }
 
     @Override
@@ -134,35 +193,33 @@ public class ModWorldEvents implements ServerEntityEvents.Load, ServerWorldEvent
             return;
         }
 
-        if (Util.isDay(serverWorld) && !Config.get().spawnInDay) {
-            return;
-        }
-
+        // Initial checks, moved up before spawn chance calculation
         if (TheManUtils.manExists(serverWorld) || TheManUtils.hallucinationsExists(serverWorld)) {
             return;
         }
 
-        if (--ticksBetweenSpawnAttempts <= 0L) {
+        // Day check: if day spawning is disabled and it's day, return early.
+        // If day spawning is enabled, the multiplier will be applied later.
+        if (Util.isDay(serverWorld) && !Config.get().spawnInDay) {
+            return;
+        }
 
-            int spawnChanceMul = Config.get().spawnChanceScalesWithPlayerCount ? serverWorld.getPlayers(VALID_PLAYER_PREDICATE).size() : 1;
+        if (--ticksBetweenSpawnAttempts <= 0L) {
+            int spawnChanceScalesWithPlayerCountMultiplier = Config.get().spawnChanceScalesWithPlayerCount ? serverWorld.getPlayers(VALID_PLAYER_PREDICATE).size() : 1;
 
             if (serverWorld.getRegistryKey() == ModDimensions.ENSHROUDED_LEVEL_KEY) {
-                spawnChanceMul *= 2;
+                spawnChanceScalesWithPlayerCountMultiplier *= 2; // This seems like a dimension-specific base multiplier, keeping it.
             }
 
-            double spawnChance = Config.get().spawnChance * spawnChanceMul;
+            double spawnChance = Config.get().spawnChance * spawnChanceScalesWithPlayerCountMultiplier;
 
-            if (Config.get().spawnInDay && serverWorld.getRegistryKey() == World.OVERWORLD && Util.isDay(serverWorld)) {
-                spawnChance /= 2.0;
+            // Apply day spawn multiplier
+            if (Config.get().spawnInDay && Util.isDay(serverWorld)) {
+                spawnChance *= Config.get().daySpawnChanceMultiplier;
             }
 
-            if (Util.isBloodMoon(serverWorld)) {
-                spawnChance *= 2;
-            }
-
-            if (Util.isSuperBloodMoon(serverWorld)) {
-                spawnChance *= 10;
-            }
+            // Apply moon event multipliers
+            spawnChance = TryUseEnhancedCelestials(serverWorld, spawnChance);
 
             double ambientChance = Config.get().fakeSpawnChance;
 
@@ -179,5 +236,34 @@ public class ModWorldEvents implements ServerEntityEvents.Load, ServerWorldEvent
 
             ticksBetweenSpawnAttempts = Util.secToTick(Config.get().timeBetweenSpawnAttempts);
         }
+    }
+
+    private double TryUseEnhancedCelestials(ServerWorld serverWorld, double spawnChance) {
+        if (!Util.isEnhancedCelestialsPresent() || !(serverWorld instanceof EnhancedCelestialsWorldData worldData)) {
+            return spawnChance;
+        }
+
+        EnhancedCelestialsContext lunarContext = worldData.getLunarContext();
+        if (lunarContext == null) {
+            return spawnChance;
+        }
+
+        LunarForecast forecast = lunarContext.getLunarForecast();
+        if (forecast == null) {
+            return spawnChance;
+        }
+
+        var eventKeyOptional = forecast.getCurrentEventRaw().getKey();
+        if (eventKeyOptional.isEmpty()) {
+            return spawnChance;
+        }
+
+        String eventIdString = eventKeyOptional.get().getValue().toString();
+        if (Config.get().moonEventSpawnMultipliers.containsKey(eventIdString)) {
+            spawnChance *= Config.get().moonEventSpawnMultipliers.get(eventIdString);
+            ManFromTheFog.LOGGER.debug("Applying multiplier for event: {}, new chance: {}", eventIdString, spawnChance);
+        }
+
+        return spawnChance;
     }
 }
