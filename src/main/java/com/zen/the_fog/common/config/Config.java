@@ -56,6 +56,13 @@ public class Config {
     public boolean spawnChanceScalesWithPlayerCount = false;
 
     @AutoGen(category = "default",group = "spawning")
+    @CustomName("Enable Man Spawning")
+    @CustomDescription("If true, The Man entity will be allowed to spawn. Set to false to disable all Man spawns.")
+    @Boolean(formatter = Boolean.Formatter.YES_NO)
+    @SerialEntry(comment = "If true, The Man entity (and related creepy sounds) will be enabled. Set to false to disable them entirely.")
+    public boolean enableManSpawning = true;
+
+    @AutoGen(category = "default",group = "spawning")
     @DoubleField(min = 1)
     @CustomName("Time between spawn attempts in seconds")
     @SerialEntry(comment = "Time between spawn attempts in seconds")

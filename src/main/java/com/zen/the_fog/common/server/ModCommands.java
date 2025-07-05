@@ -27,6 +27,14 @@ public class ModCommands {
                     context.getSource().sendFeedback(() -> Text.of("Reloaded"),true);
                     return 1;
                 }))
+                .then(literal("toggleManSpawning").executes(context -> {
+                    Config config = Config.get();
+                    config.enableManSpawning = !config.enableManSpawning;
+                    Config.HANDLER.save();
+                    String feedbackMessage = "Man spawning is now " + (config.enableManSpawning ? "ENABLED" : "DISABLED") + ".";
+                    context.getSource().sendFeedback(() -> Text.literal(feedbackMessage), true);
+                    return 1;
+                }))
             );
 
             registerTerrorCommands(dispatcher);
