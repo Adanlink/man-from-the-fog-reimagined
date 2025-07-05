@@ -5,7 +5,6 @@
   "mixins": [
   ],
   "client": [
-    "BackgroundRendererMixin",
     "ClientPlayerEntityMixin",
     "GameRendererMixin",
     "OverworldEffectMixin"
