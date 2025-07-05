@@ -185,6 +185,10 @@ public class ModWorldEvents implements ServerEntityEvents.Load, ServerWorldEvent
 
     @Override
     public void onEndTick(ServerWorld serverWorld) {
+        if (!Config.get().enableManSpawning) {
+            return; // Skip all man-related logic if spawning is disabled
+        }
+
         if (serverWorld.getPlayers(VALID_PLAYER_PREDICATE).isEmpty()) {
             return;
         }
